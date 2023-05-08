@@ -29,6 +29,7 @@ import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.metadata.RecordTestUtils;
 import org.apache.kafka.metadata.Replicas;
+import org.apache.kafka.server.immutable.ImmutableMap;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -48,15 +49,16 @@ import static org.apache.kafka.common.metadata.MetadataRecordType.REMOVE_TOPIC_R
 import static org.apache.kafka.common.metadata.MetadataRecordType.TOPIC_RECORD;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 
 @Timeout(value = 40)
 public class TopicsImageTest {
-    static final TopicsImage IMAGE1;
+    public static final TopicsImage IMAGE1;
 
-    static final List<ApiMessageAndVersion> DELTA1_RECORDS;
+    public static final List<ApiMessageAndVersion> DELTA1_RECORDS;
 
     static final TopicsDelta DELTA1;
 
@@ -73,18 +75,18 @@ public class TopicsImageTest {
         return new TopicImage(name, id, partitionMap);
     }
 
-    private static Map<Uuid, TopicImage> newTopicsByIdMap(Collection<TopicImage> topics) {
-        Map<Uuid, TopicImage> map = new HashMap<>();
+    private static ImmutableMap<Uuid, TopicImage> newTopicsByIdMap(Collection<TopicImage> topics) {
+        ImmutableMap<Uuid, TopicImage> map = TopicsImage.EMPTY.topicsById();
         for (TopicImage topic : topics) {
-            map.put(topic.id(), topic);
+            map = map.updated(topic.id(), topic);
         }
         return map;
     }
 
-    private static Map<String, TopicImage> newTopicsByNameMap(Collection<TopicImage> topics) {
-        Map<String, TopicImage> map = new HashMap<>();
+    private static ImmutableMap<String, TopicImage> newTopicsByNameMap(Collection<TopicImage> topics) {
+        ImmutableMap<String, TopicImage> map = TopicsImage.EMPTY.topicsByName();
         for (TopicImage topic : topics) {
-            map.put(topic.name(), topic);
+            map = map.updated(topic.name(), topic);
         }
         return map;
     }
@@ -396,7 +398,7 @@ public class TopicsImageTest {
         assertTrue(map.containsKey("bar"));
         assertEquals(BAR_UUID, map.get("bar"));
         assertFalse(map.containsKey("baz"));
-        assertEquals(null, map.get("baz"));
+        assertNull(map.get("baz"));
         HashSet<Uuid> uuids = new HashSet<>();
         map.values().iterator().forEachRemaining(u -> uuids.add(u));
         HashSet<Uuid> expectedUuids = new HashSet<>(Arrays.asList(
@@ -415,7 +417,7 @@ public class TopicsImageTest {
         assertTrue(map.containsKey(BAR_UUID));
         assertEquals("bar", map.get(BAR_UUID));
         assertFalse(map.containsKey(BAZ_UUID));
-        assertEquals(null, map.get(BAZ_UUID));
+        assertNull(map.get(BAZ_UUID));
         HashSet<String> names = new HashSet<>();
         map.values().iterator().forEachRemaining(n -> names.add(n));
         HashSet<String> expectedNames = new HashSet<>(Arrays.asList("foo", "bar"));

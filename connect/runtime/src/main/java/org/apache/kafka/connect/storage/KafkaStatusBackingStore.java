@@ -29,6 +29,7 @@ import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.connect.data.Schema;
@@ -63,6 +64,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
@@ -70,19 +74,19 @@ import java.util.function.Supplier;
  * of connector and task status information. When a state change is observed,
  * the new state is written to the compacted topic. The new state will not be
  * visible until it has been read back from the topic.
- *
- * In spite of their names, the putSafe() methods cannot guarantee the safety
+ * <p>
+ * In spite of their names, the {@link #putSafe} methods cannot guarantee the safety
  * of the write (since Kafka itself cannot provide such guarantees currently),
- * but it can avoid specific unsafe conditions. In particular, we putSafe()
+ * but it can avoid specific unsafe conditions. In particular, {@link #putSafe}
  * allows writes in the following conditions:
- *
- * 1) It is (probably) safe to overwrite the state if there is no previous
- *    value.
- * 2) It is (probably) safe to overwrite the state if the previous value was
- *    set by a worker with the same workerId.
- * 3) It is (probably) safe to overwrite the previous state if the current
- *    generation is higher than the previous .
- *
+ * <ol>
+ *   <li>It is (probably) safe to overwrite the state if there is no previous
+ *   value.
+ *   <li>It is (probably) safe to overwrite the state if the previous value was
+ *   set by a worker with the same workerId.
+ *   <li>It is (probably) safe to overwrite the previous state if the current
+ *   generation is higher than the previous .
+ * </ol>
  * Basically all these conditions do is reduce the window for conflicts. They
  * obviously cannot take into account in-flight requests.
  *
@@ -138,6 +142,7 @@ public class KafkaStatusBackingStore implements StatusBackingStore {
     private KafkaBasedLog<String, byte[]> kafkaLog;
     private int generation;
     private SharedTopicAdmin ownTopicAdmin;
+    private ExecutorService sendRetryExecutor;
 
     @Deprecated
     public KafkaStatusBackingStore(Time time, Converter converter) {
@@ -159,6 +164,8 @@ public class KafkaStatusBackingStore implements StatusBackingStore {
         this(time, converter);
         this.kafkaLog = kafkaLog;
         this.statusTopic = statusTopic;
+        sendRetryExecutor = Executors.newSingleThreadExecutor(
+                ThreadUtils.createThreadFactory("status-store-retry-" + statusTopic, true));
     }
 
     @Override
@@ -166,6 +173,9 @@ public class KafkaStatusBackingStore implements StatusBackingStore {
         this.statusTopic = config.getString(DistributedConfig.STATUS_STORAGE_TOPIC_CONFIG);
         if (this.statusTopic == null || this.statusTopic.trim().length() == 0)
             throw new ConfigException("Must specify topic for connector status.");
+
+        sendRetryExecutor = Executors.newSingleThreadExecutor(
+                ThreadUtils.createThreadFactory("status-store-retry-" + statusTopic, true));
 
         String clusterId = config.kafkaClusterId();
         Map<String, Object> originals = config.originals();
@@ -246,6 +256,7 @@ public class KafkaStatusBackingStore implements StatusBackingStore {
         try {
             kafkaLog.stop();
         } finally {
+            ThreadUtils.shutdownExecutorServiceQuietly(sendRetryExecutor, 10, TimeUnit.SECONDS);
             if (ownTopicAdmin != null) {
                 ownTopicAdmin.close();
             }
@@ -307,7 +318,7 @@ public class KafkaStatusBackingStore implements StatusBackingStore {
                 if (exception == null) return;
                 // TODO: retry more gracefully and not forever
                 if (exception instanceof RetriableException) {
-                    kafkaLog.send(key, value, this);
+                    sendRetryExecutor.submit((Runnable) () -> kafkaLog.send(key, value, this));
                 } else {
                     log.error("Failed to write status update", exception);
                 }
@@ -340,7 +351,8 @@ public class KafkaStatusBackingStore implements StatusBackingStore {
                             || (safeWrite && !entry.canWriteSafely(status, sequence)))
                             return;
                     }
-                    kafkaLog.send(key, value, this);
+
+                    sendRetryExecutor.submit((Runnable) () -> kafkaLog.send(key, value, this));
                 } else {
                     log.error("Failed to write status update", exception);
                 }

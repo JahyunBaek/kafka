@@ -52,7 +52,7 @@ public final class Snapshots {
         return logDir;
     }
 
-    static String filenameFromSnapshotId(OffsetAndEpoch snapshotId) {
+    public static String filenameFromSnapshotId(OffsetAndEpoch snapshotId) {
         return String.format("%s-%s", OFFSET_FORMATTER.format(snapshotId.offset()), EPOCH_FORMATTER.format(snapshotId.epoch()));
     }
 
@@ -72,7 +72,7 @@ public final class Snapshots {
         Path dir = snapshotDir(logDir);
 
         try {
-            // Create the snapshot directory if it doesn't exists
+            // Create the snapshot directory if it doesn't exist
             Files.createDirectories(dir);
             String prefix = String.format("%s-", filenameFromSnapshotId(snapshotId));
             return Files.createTempFile(dir, prefix, PARTIAL_SUFFIX);
